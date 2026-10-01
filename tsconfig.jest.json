@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    // ts-jest transpiles one file at a time rather than building a full
+    // program, which is only valid under NodeNext module resolution when
+    // isolatedModules is on - this is what silences ts-jest's TS151002 warning.
+    "isolatedModules": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

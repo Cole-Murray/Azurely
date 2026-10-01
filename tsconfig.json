@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    // NodeNext (not the older "Node") is required here: the MCP SDK's
+    // package.json uses an "exports" map with a wildcard fallback
+    // (e.g. "@modelcontextprotocol/sdk/server/mcp.js"), and only
+    // NodeNext/Node16 resolution actually reads that map. Plain "Node"
+    // resolution predates package.json exports and can't find these files.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests"]
+}

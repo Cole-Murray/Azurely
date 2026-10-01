@@ -1,0 +1,22 @@
+# Secrets - the reason this file exists. There is a real, populated .env in the
+# working tree with production credentials; .gitignore does NOT apply to the
+# Docker build context, so without this an image layer would carry them.
+.env
+.env.*
+
+# Build inputs that must be produced inside the image, never copied in.
+# dist/ on disk is stale relative to HEAD; copying it in could shadow a fresh build.
+node_modules
+dist
+coverage
+
+# Not needed at build or runtime
+.git
+.github
+.claude
+tests
+*.md
+*.log
+npm-debug.log*
+Dockerfile
+.dockerignore

@@ -1,0 +1,154 @@
+name: Deploy
+
+# Push to main is the only automatic trigger; workflow_dispatch lets someone
+# re-run a deploy by hand (e.g. after a rollback, to redeploy the same
+# commit) without needing an empty commit.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# id-token: write is what lets azure/login@v2 mint an OIDC token and trade it
+# for an Azure access token with no stored credential at all (see the OIDC
+# note further down). contents: read is enough for checkout; nothing in this
+# job needs to write back to the repo.
+permissions:
+  id-token: write
+  contents: read
+
+# Only one production deploy in flight at a time, and a newer push must wait
+# for the current deploy to *finish* rather than cancelling it — an
+# in-progress `az containerapp update` is not something you want interrupted
+# partway (it can leave a revision in a half-updated state). cancel-in-progress:
+# false is deliberate, not the more common cancel-in-progress: true you'd use
+# for, say, a PR-preview build.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+# Uses the repo's "production" GitHub Environment, which is where the
+# AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID variables below
+# are expected to live (Settings > Environments > production > Variables),
+# and is also the natural place to attach required reviewers/protection
+# rules later if this project wants a manual approval gate before deploy.
+environment: production
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Re-run the same gates CI already ran on this commit. Deliberate
+      # duplication, not redundant: this job is what actually pushes an
+      # image and updates the live app, so it must never trust "CI passed on
+      # some earlier run" — it re-verifies on the exact checkout this job is
+      # about to deploy.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Compute short SHA
+        id: vars
+        run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # OIDC federated login: no stored client secret anywhere in this
+      # workflow or in GitHub. GitHub mints a short-lived OIDC token for this
+      # specific run, Azure AD validates it against a federated credential
+      # configured on the deploy identity (see infra/README.md's CI/CD setup
+      # section for the exact federated-credential subject string this
+      # requires — it's an exact-match, case-sensitive comparison), and only
+      # then issues an Azure access token. There is no secret to leak,
+      # rotate, or expire here.
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID (and
+      # ACR_NAME / RESOURCE_GROUP / CONTAINER_APP_NAME below) are GitHub
+      # Variables (vars), not Secrets, and that's deliberate: every one of
+      # them is an identifier (a client ID, a tenant ID, a subscription ID,
+      # resource names), not a credential. None of them grants access to
+      # anything by itself — OIDC federation plus the deploy identity's
+      # actual Azure role assignments (AcrPush on the registry, Contributor
+      # on this one container app — see infra/README.md's CI/CD setup
+      # section) are what grant access. Treating identifiers as Secrets just
+      # hides useful debugging information (e.g. from workflow logs) for no
+      # security benefit.
+      - name: az acr login
+        run: az acr login --name ${{ vars.ACR_NAME }}
+
+      - name: Build and push image
+        env:
+          IMAGE_REPO: ${{ vars.ACR_NAME }}.azurecr.io/iam-mcp
+          SHORT_SHA: ${{ steps.vars.outputs.short_sha }}
+        run: |
+          docker build \
+            --build-arg GIT_SHA="$SHORT_SHA" \
+            -t "$IMAGE_REPO:$SHORT_SHA" \
+            -t "$IMAGE_REPO:latest" \
+            .
+          docker push "$IMAGE_REPO:$SHORT_SHA"
+          docker push "$IMAGE_REPO:latest"
+
+      # Deploy by the immutable SHA tag, never by :latest. `az containerapp
+      # update` only creates a new revision when the container spec actually
+      # changes; if this deployed `:latest` every time, the image *string*
+      # passed to the command would be identical run over run even though
+      # the bytes behind that tag changed, so Container Apps would see "no
+      # change" and silently skip creating a new revision — a no-op deploy
+      # that reports success. The SHA tag is a different string on every
+      # commit, so it always forces a new revision, and --revision-suffix
+      # makes "which commit is this revision" answerable directly from
+      # `az containerapp revision list` without cross-referencing image
+      # digests. (:latest is still pushed above purely as a convenience
+      # pointer for manual `docker pull` use — it is never what gets
+      # deployed.)
+      - name: Deploy new revision
+        env:
+          IMAGE_REPO: ${{ vars.ACR_NAME }}.azurecr.io/iam-mcp
+          SHORT_SHA: ${{ steps.vars.outputs.short_sha }}
+        run: |
+          az containerapp update \
+            --name ${{ vars.CONTAINER_APP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --image "$IMAGE_REPO:$SHORT_SHA" \
+            --revision-suffix "$SHORT_SHA"
+
+      # Smoke test: poll the new revision's /healthz until it answers 200,
+      # or fail the job. /healthz never touches Graph/ARM/Key Vault (see the
+      # probes comment in infra/main.bicep) so a healthy response here means
+      # "the container started and is serving HTTP", independent of whether
+      # credentials have finished loading yet - a fast, unambiguous signal
+      # that the deploy itself didn't break container startup.
+      - name: Smoke test
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ vars.CONTAINER_APP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+
+          echo "Polling https://$FQDN/healthz ..."
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /dev/null -w "%{http_code}" "https://$FQDN/healthz" || echo "000")
+            if [ "$status" = "200" ]; then
+              echo "Healthy after $i attempt(s)."
+              exit 0
+            fi
+            echo "Attempt $i: got HTTP $status, retrying in 5s..."
+            sleep 5
+          done
+
+          echo "::error::/healthz never returned 200 after deploy - see infra/README.md's rollback section."
+          exit 1

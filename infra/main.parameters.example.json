@@ -1,0 +1,73 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "_comment": {
+    "_general": "This is an EXAMPLE parameters file with placeholder values only — hence the .example.json name. Copy it to main.parameters.json, fill in real values, and NEVER commit that copy (see infra/README.md, which notes it should be gitignored). The '_comment' object itself is not a real deployment parameter; az deployment group create/what-if ignores unrecognized top-level keys and only reads 'parameters'.",
+    "location": "Azure region for every resource this template creates (Log Analytics, Container Apps environment, container app, managed identity). Does not affect the existing ACR/Key Vault, which keep whatever region they already have.",
+    "acrName": "Name of the existing Azure Container Registry (created manually per infra/README.md step 2 — this template never creates it). Must be in the same resource group you deploy this template into: the AcrPull role assignment is an extension resource, and Azure only lets one target a resource inside the deployment's own resource group.",
+    "keyVaultName": "Name of the existing Key Vault holding the 'azure-client-secret' secret (created manually per infra/README.md step 2 — this template never creates it). Same same-resource-group requirement as acrName, for the same reason (the Key Vault Secrets User role assignment).",
+    "imageRepository": "Repository name inside the ACR. 'iam-mcp' matches what infra/README.md's manual bring-up and .github/workflows/deploy.yml both build and push under.",
+    "imageTag": "The image tag to deploy. IMPORTANT: if you're re-running this template against an app that CI has already deployed to, read the currently-live tag first (az containerapp show ... --query \"properties.template.containers[0].image\") and pass that here — otherwise you will roll the running app back to whatever tag this file happens to have. See infra/README.md's 'image-tag drift trap'.",
+    "minReplicas": "Minimum replica count. Left at 1 (this template's default) unless you have a specific reason to change it — see main.bicep's parameter description for why 0 is a real user-facing regression here, not just a cost optimization.",
+    "maxReplicas": "Maximum replica count. Left at 1 (this template's default) — raising this needs a real multi-replica session story first (see main.bicep's parameter description).",
+    "logRetentionDays": "Log Analytics retention in days for the audit trail. 90 is the deliberate policy default; only override if that policy changes.",
+    "azureTenantId": "Primary Entra tenant GUID (AZURE_TENANT_ID). Not secret, but still a real tenant identifier — this is exactly why the real, filled-in parameters file must never be committed.",
+    "azureClientId": "The multi-tenant app registration's client ID (AZURE_CLIENT_ID). Not secret.",
+    "azureTenantId2": "Optional second tenant GUID (AZURE_TENANT_ID_2). Leave as an empty string to run single-tenant. Must be set together with azureTenantDisplayName2 — the app treats these as a pair.",
+    "azureTenantDisplayName2": "Optional second tenant display name (AZURE_TENANT_DISPLAYNAME_2). Must be set together with azureTenantId2.",
+    "mcpInboundTenantId": "Optional inbound caller-auth config: expected tenant ID for inbound MCP callers. Leave blank if inbound auth isn't configured yet.",
+    "mcpInboundAudiences": "Optional inbound caller-auth config: accepted audiences (comma-separated, per the app's own parsing).",
+    "mcpRequiredScope": "Optional inbound caller-auth config: required scope/role claim.",
+    "mcpCanonicalResource": "Optional inbound caller-auth config: canonical resource identifier the app presents itself as."
+  },
+  "parameters": {
+    "location": {
+      "value": "eastus2"
+    },
+    "acrName": {
+      "value": "<your-acr-name>"
+    },
+    "keyVaultName": {
+      "value": "<your-keyvault-name>"
+    },
+    "imageRepository": {
+      "value": "iam-mcp"
+    },
+    "imageTag": {
+      "value": "<git-sha-or-latest-known-good-tag>"
+    },
+    "minReplicas": {
+      "value": 1
+    },
+    "maxReplicas": {
+      "value": 1
+    },
+    "logRetentionDays": {
+      "value": 90
+    },
+    "azureTenantId": {
+      "value": "<primary-tenant-guid>"
+    },
+    "azureClientId": {
+      "value": "<app-registration-client-id>"
+    },
+    "azureTenantId2": {
+      "value": ""
+    },
+    "azureTenantDisplayName2": {
+      "value": ""
+    },
+    "mcpInboundTenantId": {
+      "value": ""
+    },
+    "mcpInboundAudiences": {
+      "value": ""
+    },
+    "mcpRequiredScope": {
+      "value": ""
+    },
+    "mcpCanonicalResource": {
+      "value": ""
+    }
+  }
+}

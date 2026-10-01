@@ -1,0 +1,41 @@
+{
+  "name": "entra-iam-review-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only MCP server for querying Entra ID directory role assignments via Microsoft Graph.",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=22.22.0 <23"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "jest --selectProjects unit",
+    "test:integration": "jest --selectProjects integration"
+  },
+  "dependencies": {
+    "@azure/arm-authorization": "^9.0.0",
+    "@azure/arm-resources": "^6.1.0",
+    "@azure/arm-subscriptions": "^5.1.0",
+    "@azure/core-rest-pipeline": "^1.24.0",
+    "@azure/identity": "^4.13.1",
+    "@azure/keyvault-secrets": "^4.11.2",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jose": "^5.10.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.1.0",
+    "@types/supertest": "^6.0.0",
+    "jest": "^30.4.2",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.4.11",
+    "typescript": "^6.0.3"
+  }
+}

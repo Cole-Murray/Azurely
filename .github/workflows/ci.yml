@@ -1,0 +1,60 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main, v3-development, remote-hosting]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+
+      # Gate 1: does it compile? Nothing in this repo checked this before today.
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Gate 2: unit tests only. The `integration` Jest project hits real Azure
+      # tenants and must never run in CI - `npm test` selects only the unit
+      # project, and every integration file is additionally gated behind
+      # RUN_INTEGRATION_TESTS, which is deliberately not set here.
+      - name: Unit tests
+        run: npm test
+
+      # Gate 3: the read-only invariant. SECURITY.md section 1 and CLAUDE.md's
+      # non-negotiable constraints assert "no mutating Graph or ARM call
+      # anywhere in src/" by hand; this makes it mechanical so a PR can fail
+      # on it. It is a smoke test, not a proof - it cannot see through
+      # something like client.api(x)["po"+"st"]().
+      #
+      # One documented exclusion: Express route *registration* on the app
+      # object (app.post/app.delete/... in src/http/) is HTTP routing, not an
+      # outbound call, and matches the pattern purely by shape. It is filtered
+      # by an anchored `app.<verb>(` match rather than by skipping src/http/
+      # wholesale, so a genuine mutating call added to that directory is still
+      # caught. Any future exclusion should be this narrow and carry the same
+      # kind of comment - do not broaden the filter or delete the gate.
+      - name: Read-only invariant (no mutating Graph/ARM calls in src/)
+        run: |
+          hits=$(grep -rnE '\.(post|patch|put|delete)\(|\.(create|beginCreate|beginDelete|beginUpdate|update|remove)[A-Za-z]*\(' src/ \
+                 | grep -vE '^[^:]+:[0-9]+:[[:space:]]*app\.(get|post|put|patch|delete|use|all)\(' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::Mutating call found in src/. This project is read-only by construction (SECURITY.md section 1)."
+            exit 1
+          fi
+          echo "OK: no mutating Graph/ARM call patterns in src/"
+
+      # Gate 4: the image must never contain the production .env. There is a
+      # real populated .env in the working tree and .gitignore does not apply
+      # to the Docker build context, so this is a genuine leak check.
+      - name: Docker build and assert no .env in image
+        run: |
+          docker build --build-arg GIT_SHA=${GITHUB_SHA::7} -t iam-mcp:ci .
+          docker run --rm --entrypoint sh iam-mcp:ci -c \
+            'test ! -f /app/.env && test ! -f /app/.env.example && echo "OK: no .env in image"'
